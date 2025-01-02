@@ -1,202 +1,224 @@
-#include <GL/glut.h>
+#include <cstdio>
 #include <cstdlib>
-#include <ctime>
-#include <vector>
+#include <iostream>
+#include <time.h>
+
+#include<windows.h>
+#include<GL/glut.h>
+#include<stdlib.h>
+#include<math.h>
+
 using namespace std;
 
-// Constants
-const int GRID_WIDTH = 10;
-const int GRID_HEIGHT = 20;
-const int BLOCK_SIZE = 30;
+// Constants for the game
+const int ROWS = 20;
+const int COLS = 10;
+const int BLOCKSIZE = 40;
+const int VPWIDTH = COLS * BLOCKSIZE;
+const int VPHEIGHT = ROWS * BLOCKSIZE;
 
-// Current shape and its position
-int shape[4][4];
-int shapeX = 3, shapeY = 0;
+// Square class
+class Square {
+public:
+    bool isFilled;
+    float red, green, blue;
 
-// Game grid
-int grid[GRID_HEIGHT][GRID_WIDTH] = {0};
-
-// Shapes for H, U, M, A
-vector<vector<vector<int>>> shapes = {
-    // H
-    {{1, 0, 1},
-     {1, 1, 1},
-     {0, 0, 0}},
-    // U
-    {{1, 0, 1},
-     {1, 0, 1},
-     {1, 1, 1}},
-    // M
-    {{1, 0, 0, 1},
-     {1, 1, 1, 1}},
-    // A
-    {{0, 1, 0},
-     {1, 0, 1},
-     {1, 1, 1}}
+    Square() : isFilled(false), red(0.0f), green(0.0f), blue(0.0f) {}
 };
 
-// Function to draw a block
-void drawBlock(int x, int y) {
-    glBegin(GL_QUADS);
-    glVertex2f(x, y);
-    glVertex2f(x + BLOCK_SIZE, y);
-    glVertex2f(x + BLOCK_SIZE, y + BLOCK_SIZE);
-    glVertex2f(x, y + BLOCK_SIZE);
-    glEnd();
-}
+// Piece class
+class Piece {
+public:
+    int type, x, y, rotation;
+    static const int numPieces = 7;
 
-// Initialize a random shape
-void generateShape() {
-    int randomIndex = rand() % shapes.size();
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 4; j++) {
-            shape[i][j] = shapes[randomIndex][i][j];
-        }
+    Piece(int t = 0) : type(t), x(0), y(0), rotation(0) {}
+
+    const int* rotations() const {
+        static const int shapes[7][16] = {
+            // Shape data for Tetris pieces
+            { 1, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, // T
+            { 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, // I
+            { 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, // L
+            { 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, // J
+            { 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, // S
+            { 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, // Z
+            { 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }  // O
+        };
+        return shapes[type];
     }
-    shapeX = 3;
-    shapeY = 0;
-}
+};
 
-// Check collision
-bool checkCollision(int dx, int dy) {
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 4; j++) {
-            if (shape[i][j]) {
-                int newX = shapeX + j + dx;
-                int newY = shapeY + i + dy;
-                if (newX < 0 || newX >= GRID_WIDTH || newY >= GRID_HEIGHT || grid[newY][newX]) {
-                    return true;
+// Main game class
+class Game {
+public:
+    // Game data
+    bool killed, paused, deleteLines;
+    int linesCleared, shapesCount, timer;
+    Piece activePiece, nextPiece, activePieceCopy;
+    Square mainGrid[ROWS][COLS];
+    Square nextPieceGrid[5][5];
+
+    // Constructor
+    Game() : killed(false), paused(false), deleteLines(false), linesCleared(0), shapesCount(0), timer(500) {}
+
+    void clearMainGrid() {
+        for (int r = 0; r < ROWS; ++r)
+            for (int c = 0; c < COLS; ++c)
+                mainGrid[r][c] = Square();
+    }
+
+    void clearNextPieceGrid() {
+        for (int r = 0; r < 5; ++r)
+            for (int c = 0; c < 5; ++c)
+                nextPieceGrid[r][c] = Square();
+    }
+
+    void restart() {
+        clearMainGrid();
+        clearNextPieceGrid();
+        linesCleared = 0;
+        shapesCount = 1;
+        killed = false;
+        paused = false;
+        deleteLines = false;
+
+        activePiece = Piece(rand() % Piece::numPieces);
+        activePiece.x = COLS / 2;
+        activePiece.y = 0;
+        updateActivePiece();
+
+        nextPiece = Piece(rand() % Piece::numPieces);
+        updateNextPieceGrid();
+    }
+
+    void updateActivePiece() {
+        const int* trans = activePiece.rotations();
+        for (int i = 0; i < 4; ++i)
+            for (int j = 0; j < 4; ++j) {
+                int idx = i * 4 + j;
+                if (trans[idx]) {
+                    mainGrid[activePiece.y + i][activePiece.x + j].isFilled = true;
                 }
             }
-        }
     }
-    return false;
-}
 
-// Lock the shape into the grid
-void lockShape() {
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 4; j++) {
-            if (shape[i][j]) {
-                grid[shapeY + i][shapeX + j] = 1;
+    void updateNextPieceGrid() {
+        const int* trans = nextPiece.rotations();
+        for (int i = 0; i < 4; ++i)
+            for (int j = 0; j < 4; ++j) {
+                int idx = i * 4 + j;
+                if (trans[idx]) {
+                    nextPieceGrid[i + 1][j].isFilled = true;
+                }
             }
+    }
+
+    void update() {
+        if (moveCollision(0)) {
+            if (activePiece.y <= 2) {
+                killed = true;
+            } else {
+                fixActivePiece();
+                checkLine();
+                if (deleteLines) clearLine();
+                genNextPiece();
+                clearNextPieceGrid();
+                updateNextPieceGrid();
+                updateActivePiece();
+            }
+        } else {
+            fixActivePiece();
+            activePiece.y++;
+            updateActivePiece();
         }
     }
-}
 
-// Move the shape down
-void dropShape() {
-    if (!checkCollision(0, 1)) {
-        shapeY++;
-    } else {
-        lockShape();
-        generateShape();
-    }
-}
+    // Additional methods here...
 
-// Rotate the shape clockwise
-void rotateShapeClockwise() {
-    int temp[4][4];
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 4; j++) {
-            temp[j][3 - i] = shape[i][j];
-        }
+private:
+    void genNextPiece() {
+        activePiece = nextPiece;
+        nextPiece = Piece(rand() % Piece::numPieces);
+        activePiece.x = COLS / 2;
+        activePiece.y = 0;
     }
-    memcpy(shape, temp, sizeof(temp));
-    if (checkCollision(0, 0)) {
-        rotateShapeClockwise(); // Undo rotation if it collides
-    }
-}
 
-// Rotate the shape counterclockwise
-void rotateShapeCounterClockwise() {
-    int temp[4][4];
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 4; j++) {
-            temp[3 - j][i] = shape[i][j];
-        }
-    }
-    memcpy(shape, temp, sizeof(temp));
-    if (checkCollision(0, 0)) {
-        rotateShapeCounterClockwise(); // Undo rotation if it collides
+    bool moveCollision(int dir) { /* Collision logic */ return false; }
+    void fixActivePiece() { /* Fix the piece in the grid */ }
+    void checkLine() { /* Check for filled lines */ }
+    void clearLine() { /* Clear lines */ }
+};
+
+// Global variables
+Game game;
+
+// Displaying text on the screen
+void BitmapText(char* str, int wcx, int wcy) {
+    glRasterPos2i(wcx, wcy);
+    for (int i = 0; str[i] != '\0'; ++i) {
+        glutBitmapCharacter(GLUT_BITMAP_9_BY_15, str[i]);
     }
 }
 
-// Render the scene
+// Callback functions
 void display() {
+    glClearColor(0.2f, 0.2f, 0.2f, 0.72f);
     glClear(GL_COLOR_BUFFER_BIT);
-
-    // Draw grid
-    for (int y = 0; y < GRID_HEIGHT; y++) {
-        for (int x = 0; x < GRID_WIDTH; x++) {
-            if (grid[y][x]) {
-                glColor3f(0.5, 0.5, 0.5);
-                drawBlock(x * BLOCK_SIZE, y * BLOCK_SIZE);
-            }
-        }
-    }
-
-    // Draw current shape
-    glColor3f(1.0, 0.0, 0.0);
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 4; j++) {
-            if (shape[i][j]) {
-                drawBlock((shapeX + j) * BLOCK_SIZE, (shapeY + i) * BLOCK_SIZE);
-            }
-        }
-    }
-
+    // Game rendering logic...
     glutSwapBuffers();
 }
 
-// Handle keyboard input
-void keyboard(int key, int x, int y) {
-    if (key == GLUT_KEY_LEFT && !checkCollision(-1, 0)) {
-        shapeX--;
-    } else if (key == GLUT_KEY_RIGHT && !checkCollision(1, 0)) {
-        shapeX++;
-    }
-    glutPostRedisplay();
+void keyboard(unsigned char key, int x, int y) {
+   /*switch (key) {
+        case GLUT_KEY_LEFT:
+            if (shapeX > -GRID_WIDTH / 2 + 1) {
+                shapeX -= 1.0;
+                glutPostRedisplay();
+            }
+            break;
+        case GLUT_KEY_RIGHT:
+            if (shapeX < GRID_WIDTH / 2 - 1) {
+                shapeX += 1.0;
+                glutPostRedisplay();
+            }
+            break;
+    }*/
 }
 
-// Handle mouse input
-void mouse(int button, int state, int x, int y) {
-    if (state == GLUT_DOWN) {
-        if (button == GLUT_LEFT_BUTTON) {
-            rotateShapeClockwise();
-        } else if (button == GLUT_RIGHT_BUTTON) {
-            rotateShapeCounterClockwise();
-        }
+void special(int key, int x, int y) {
+    // Handle special keys...
+}
+
+void timer(int id) {
+    if (game.killed) {
+        game.paused = true;
+        game.clearMainGrid();
+        game.clearNextPieceGrid();
         glutPostRedisplay();
+    } else if (!game.paused) {
+        game.update();
+        if (game.killed) {
+            glutTimerFunc(10, timer, 1);
+        } else {
+            glutPostRedisplay();
+            glutTimerFunc(game.timer, timer, 0);
+        }
     }
 }
 
-// Timer for dropping the shape
-void timer(int) {
-    dropShape();
-    glutPostRedisplay();
-    glutTimerFunc(500, timer, 0);
-}
-
-// Initialize OpenGL
-void init() {
-    glClearColor(0.0, 0.0, 0.0, 1.0);
-    glOrtho(0, GRID_WIDTH * BLOCK_SIZE, GRID_HEIGHT * BLOCK_SIZE, 0, -1, 1);
-    generateShape();
+int main(int argc, char* argv[]) {
     srand(time(0));
-}
-
-int main(int argc, char** argv) {
     glutInit(&argc, argv);
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB);
-    glutInitWindowSize(GRID_WIDTH * BLOCK_SIZE, GRID_HEIGHT * BLOCK_SIZE);
-    glutCreateWindow("Tetris Game with H, U, M, A");
+    glutInitWindowPosition(100, 100);
+    glutInitWindowSize(VPWIDTH * 2, VPHEIGHT);
+    glutCreateWindow("Tetris");
 
-    init();
     glutDisplayFunc(display);
-    glutSpecialFunc(keyboard);
-    glutMouseFunc(mouse);
-    glutTimerFunc(500, timer, 0);
+    glutSpecialFunc(special);
+    glutKeyboardFunc(keyboard);
+    glutTimerFunc(game.timer, timer, 0);
     glutMainLoop();
     return 0;
 }
